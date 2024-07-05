@@ -13,6 +13,7 @@
 #include <linux/fs.h>       /* for register_chrdev */
 #include <linux/uaccess.h>  /* for get_user and put_user */
 #include <linux/string.h>   /* for memset. NOTE - not string.h!*/
+// #include <errno.h> // handle this
 
 MODULE_LICENSE("GPL");
 
@@ -30,9 +31,9 @@ static struct chardev_info device_info;
 
 // The message the device will give when asked
 static char the_message[BUF_LEN];
+static int current_message_length = 0;
 
-//Do we need to encrypt?
-static int encryption_flag = 0;
+static int channel_id = 0;
 
 //================== DEVICE FUNCTIONS ===========================
 static int device_open( struct inode* inode,
@@ -75,13 +76,34 @@ static ssize_t device_read( struct file* file,
                             size_t       length,
                             loff_t*      offset )
 {
-  // read doesnt really do anything (for now)
-  printk( "Invocing device_read(%p,%ld) - "
-          "operation not supported yet\n"
-          "(last written - %s)\n",
-          file, length, the_message );
-  //invalid argument error
-  return -EINVAL;
+    ssize_t i;
+    printk("here0");
+    if(channel_id == 0){
+        //errno = EINVAL;
+        printk("here0.1");
+        return -1;
+    }
+    // if(buffer[0] = NULL){ //  handle this
+    //     //errno = EWOULDBLOCK;
+    //     return -1;
+    // }
+    printk("%ld %d", length, current_message_length);
+    if(length < current_message_length){
+        printk("here1");
+        //errno = ENOSPC;
+        return -1;
+    }
+    //any other error
+    printk("here2");
+    printk("Invocing device_read");
+    for(i = 0; i < current_message_length && i < BUF_LEN; ++i) {
+        printk("here3");
+        put_user(the_message[i], &buffer[i]);
+        printk("%c\n", the_message[i]);
+    }
+    printk("%s", buffer);
+    printk("here4");
+    return i; // return number of read bytes
 }
 
 //---------------------------------------------------------------
@@ -92,16 +114,24 @@ static ssize_t device_write( struct file*       file,
                              size_t             length,
                              loff_t*            offset)
 {
-  ssize_t i;
-  printk("Invoking device_write(%p,%ld)\n", file, length);
-  for( i = 0; i < length && i < BUF_LEN; ++i ) {
-    get_user(the_message[i], &buffer[i]);
-    if( 1 == encryption_flag )
-      the_message[i] += 1;
-  }
- 
-  // return the number of input characters used
-  return i;
+    ssize_t i;
+    if(channel_id == 0){
+        //errno = EINVAL;
+        return -1;
+    }
+    if(length == 0 || length > 128){
+        //errno = EMSGSIZE;
+        return -1;
+    }
+    // any other error: -1, errno = what suits
+
+    printk("Invoking device_write(%p,%ld)\n", file, length);
+    for(i = 0; i < length && i < BUF_LEN; ++i) {
+        get_user(the_message[i], &buffer[i]);
+    }
+    printk("message current is %s\n", the_message);
+    current_message_length = i;
+    return i;
 }
 
 //----------------------------------------------------------------
@@ -110,13 +140,11 @@ static long device_ioctl( struct   file* file,
                           unsigned long  ioctl_param )
 {
   // Switch according to the ioctl called
-  if( MSG_SLOT_CHANNEL == ioctl_command_id ) {
-    // Get the parameter given to ioctl by the process
-    printk( "Invoking ioctl: setting encryption "
-            "flag to %ld\n", ioctl_param );
-    encryption_flag = ioctl_param;
+  if( MSG_SLOT_CHANNEL != ioctl_command_id || ioctl_param == 0) {
+    //errno = EINVAL;
+    return -1;
   }
-
+  channel_id = ioctl_param;
   return SUCCESS;
 }
 
@@ -147,7 +175,7 @@ static int __init simple_init(void)
 
   // Negative values signify an error
   if( rc < 0 ) {
-    printk( KERN_ALERT "%s registraion failed for  %d\n",
+    printk( KERN_ERR "%s registraion failed for  %d\n",
                        DEVICE_FILE_NAME, MAJOR_NUM );
     return rc;
   }
