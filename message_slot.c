@@ -13,6 +13,7 @@
 #include <linux/fs.h>       /* for register_chrdev */
 #include <linux/uaccess.h>  /* for get_user and put_user */
 #include <linux/string.h>   /* for memset. NOTE - not string.h!*/
+#include <linux/slab.h>
 // #include <errno.h> // handle this
 
 MODULE_LICENSE("GPL");
@@ -30,10 +31,55 @@ static int dev_open_flag = 0;
 static struct chardev_info device_info;
 
 // The message the device will give when asked
-static char the_message[BUF_LEN];
-static int current_message_length = 0;
+//static char the_message[BUF_LEN];
+//static int current_message_length = 0;
+//tatic int channel_id = 0;
 
-static int channel_id = 0;
+
+//================== LinkedList FUNCTIONS ===========================
+
+struct ChannelNode {
+  char *the_message;
+  int channel; 
+  int current_message_length;
+  struct ChannelNode *next;
+};
+
+//---------------------------------------------------------------
+struct ChannelNode *channel = NULL;
+struct ChannelNode *list_head = NULL;
+//---------------------------------------------------------------
+
+void InsertChannelNode(int channel){
+  struct ChannelNode *channelNode = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
+  if(channelNode == NULL){
+    printk(KERN_ERR "Error while trying to allocate channel node");
+    return;
+  }
+  channelNode->channel = channel;
+  channelNode->next = list_head;
+  channelNode->current_message_length = 0;
+  channelNode->the_message = (char*)kmalloc(sizeof(char)*BUF_LEN, GFP_KERNEL);
+  list_head = channelNode;
+};
+
+//---------------------------------------------------------------
+
+struct ChannelNode* get_channel_node(int channel){
+  struct ChannelNode *channelNode = list_head;
+  while(channelNode->channel != 0){
+    if(channelNode->channel == channel){
+      return channelNode;
+    }
+    channelNode = channelNode->next;
+  }
+
+  InsertChannelNode(channel);
+  return list_head;
+};
+
+//---------------------------------------------------------------
+
 
 //================== DEVICE FUNCTIONS ===========================
 static int device_open( struct inode* inode,
@@ -77,32 +123,26 @@ static ssize_t device_read( struct file* file,
                             loff_t*      offset )
 {
     ssize_t i;
-    printk("here0");
-    if(channel_id == 0){
+    if(channel->channel == 0){
         //errno = EINVAL;
-        printk("here0.1");
         return -1;
     }
     // if(buffer[0] = NULL){ //  handle this
     //     //errno = EWOULDBLOCK;
     //     return -1;
     // }
-    printk("%ld %d", length, current_message_length);
-    if(length < current_message_length){
-        printk("here1");
+    printk("%ld %d", length, channel->current_message_length);
+    if(length < channel->current_message_length){
         //errno = ENOSPC;
         return -1;
     }
     //any other error
-    printk("here2");
     printk("Invocing device_read");
-    for(i = 0; i < current_message_length && i < BUF_LEN; ++i) {
-        printk("here3");
-        put_user(the_message[i], &buffer[i]);
-        printk("%c\n", the_message[i]);
+    for(i = 0; i < channel->current_message_length && i < BUF_LEN; ++i) {
+        put_user(channel->the_message[i], &buffer[i]);
+        printk("%c\n", channel->the_message[i]);
     }
     printk("%s", buffer);
-    printk("here4");
     return i; // return number of read bytes
 }
 
@@ -115,7 +155,7 @@ static ssize_t device_write( struct file*       file,
                              loff_t*            offset)
 {
     ssize_t i;
-    if(channel_id == 0){
+    if(channel->channel == 0){
         //errno = EINVAL;
         return -1;
     }
@@ -127,10 +167,10 @@ static ssize_t device_write( struct file*       file,
 
     printk("Invoking device_write(%p,%ld)\n", file, length);
     for(i = 0; i < length && i < BUF_LEN; ++i) {
-        get_user(the_message[i], &buffer[i]);
+        get_user(channel->the_message[i], &buffer[i]);
     }
-    printk("message current is %s\n", the_message);
-    current_message_length = i;
+    printk("message current is %s\n", channel->the_message);
+    channel->current_message_length = i;
     return i;
 }
 
@@ -144,7 +184,7 @@ static long device_ioctl( struct   file* file,
     //errno = EINVAL;
     return -1;
   }
-  channel_id = ioctl_param;
+  channel = get_channel_node(ioctl_param);
   return SUCCESS;
 }
 
@@ -178,6 +218,12 @@ static int __init simple_init(void)
     printk( KERN_ERR "registraion failed for  %d\n", MAJOR_NUM );
     return rc;
   }
+
+  channel = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
+  channel->channel = 0;
+  list_head = channel;
+
+  printk("channel number is %d", channel->channel);
 
   printk( "Registeration is successful. ");
   printk( "If you want to talk to the device driver,\n" );
