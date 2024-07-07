@@ -24,9 +24,9 @@ int main(int argc, char *argv[])
     file_path = argv[1];
     channel_id = atoi(argv[2]);
 
-    file_desc = open( "/dev/"DEVICE_FILE_NAME, O_RDWR );
+    file_desc = open( file_path, O_RDWR );
     if( file_desc < 0 ) {
-        printf ("Can't open device file: %s\n", DEVICE_FILE_NAME);
+        printf ("Can't open device file: %s\n", file_path);
         exit(-1);
     }
     buffer = (char*)malloc(sizeof(char));

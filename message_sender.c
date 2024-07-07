@@ -25,9 +25,9 @@ int main(int argc, char *argv[])
   channel_id = atoi(argv[2]);
   message = argv[3];
 
-  file_desc = open( "/dev/"DEVICE_FILE_NAME, O_RDWR );
+  file_desc = open( file_path, O_RDWR );
   if( file_desc < 0 ) {
-    printf("Can't open device file: %s\n", DEVICE_FILE_NAME);
+    printf("Can't open device file: %s\n", file_path);
     exit(-1);
   }
 

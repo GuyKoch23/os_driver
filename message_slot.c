@@ -175,15 +175,14 @@ static int __init simple_init(void)
 
   // Negative values signify an error
   if( rc < 0 ) {
-    printk( KERN_ERR "%s registraion failed for  %d\n",
-                       DEVICE_FILE_NAME, MAJOR_NUM );
+    printk( KERN_ERR "registraion failed for  %d\n", MAJOR_NUM );
     return rc;
   }
 
   printk( "Registeration is successful. ");
   printk( "If you want to talk to the device driver,\n" );
   printk( "you have to create a device file:\n" );
-  printk( "mknod /dev/%s c %d 0\n", DEVICE_FILE_NAME, MAJOR_NUM );
+  printk( "mknod /dev/%s c %d 0\n", "device file name", MAJOR_NUM );
   printk( "You can echo/cat to/from the device file.\n" );
   printk( "Dont forget to rm the device file and "
           "rmmod when you're done\n" );
