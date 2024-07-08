@@ -38,6 +38,7 @@ static struct chardev_info device_info;
 
 //================== LinkedList FUNCTIONS ===========================
 
+
 struct ChannelNode {
   char *the_message;
   int channel; 
@@ -45,28 +46,97 @@ struct ChannelNode {
   struct ChannelNode *next;
 };
 
+struct SlotNode{
+  int minor;
+  struct ChannelNode *headChannelNode;
+  struct SlotNode *next;
+};
+
 //---------------------------------------------------------------
-struct ChannelNode *channel = NULL;
-struct ChannelNode *list_head = NULL;
+struct SlotNode *list_head = NULL;
 //---------------------------------------------------------------
 
-void InsertChannelNode(int channel){
+void InsertChannelNode(struct SlotNode *slotNode, int channel){
   struct ChannelNode *channelNode = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
   if(channelNode == NULL){
     printk(KERN_ERR "Error while trying to allocate channel node");
     return;
   }
   channelNode->channel = channel;
-  channelNode->next = list_head;
   channelNode->current_message_length = 0;
   channelNode->the_message = (char*)kmalloc(sizeof(char)*BUF_LEN, GFP_KERNEL);
-  list_head = channelNode;
+  channelNode->next = slotNode->headChannelNode;
+  slotNode->headChannelNode = channelNode;
 };
 
 //---------------------------------------------------------------
 
-struct ChannelNode* get_channel_node(int channel){
-  struct ChannelNode *channelNode = list_head;
+
+
+//---------------------------------------------------------------
+
+
+
+struct ChannelNode* create_zero_channel_node(void){
+  struct ChannelNode *channelNode = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
+  if(channelNode == NULL){
+    printk(KERN_ERR "Error while trying to allocate channel node");
+    return NULL;
+  }
+  channelNode->channel = 0;
+  channelNode->next = NULL;
+  channelNode->current_message_length = 0;
+  channelNode->the_message = NULL;
+  return channelNode;
+}
+
+//---------------------------------------------------------------
+
+void initialize_ds_for_minor(int minor){
+  struct SlotNode *slotNode = kmalloc(sizeof(struct SlotNode), GFP_KERNEL);
+  if(slotNode == NULL){
+    printk(KERN_ERR "Error while trying to allocate slot node");
+    return;
+  }
+  slotNode->minor = minor;
+  slotNode->headChannelNode = create_zero_channel_node();
+  slotNode->next = list_head;
+  list_head = slotNode;
+};
+
+//---------------------------------------------------------------
+
+struct SlotNode* get_slot_node(int minor){
+    struct SlotNode *slotNode = list_head;
+    while(slotNode != NULL){
+      if(slotNode->minor == minor){
+        return slotNode;
+      }
+      slotNode = slotNode->next;
+    }
+    initialize_ds_for_minor(minor);
+    return list_head;
+}
+
+
+
+//---------------------------------------------------------------
+
+  int is_slot_initialized(int minor){
+    struct SlotNode *slotNode = list_head;
+    while(slotNode != NULL){
+      if(slotNode->minor == minor){
+        return 1;
+      }
+      slotNode = slotNode->next;
+    }
+    return 0;
+};
+
+
+struct ChannelNode* get_channel_node(int minor, int channel){
+  struct SlotNode* slotNode = get_slot_node(minor);
+  struct ChannelNode *channelNode = slotNode->headChannelNode;
   while(channelNode->channel != 0){
     if(channelNode->channel == channel){
       return channelNode;
@@ -74,11 +144,9 @@ struct ChannelNode* get_channel_node(int channel){
     channelNode = channelNode->next;
   }
 
-  InsertChannelNode(channel);
-  return list_head;
+  InsertChannelNode(slotNode, channel);
+  return slotNode->headChannelNode;
 };
-
-//---------------------------------------------------------------
 
 
 //================== DEVICE FUNCTIONS ===========================
@@ -86,10 +154,18 @@ static int device_open( struct inode* inode,
                         struct file*  file )
 {
   unsigned long flags; // for spinlock
+  int minor;
   printk("Invoking device_open(%p)\n", file);
 
   // We don't want to talk to two processes at the same time
   spin_lock_irqsave(&device_info.lock, flags);
+
+  //DataStructure already initialized for devide file
+  minor = iminor(inode);
+  if(is_slot_initialized(minor) == 0){
+    initialize_ds_for_minor(minor);
+  }
+  
   if( 1 == dev_open_flag ) {
     spin_unlock_irqrestore(&device_info.lock, flags);
     return -EBUSY;
@@ -123,7 +199,9 @@ static ssize_t device_read( struct file* file,
                             loff_t*      offset )
 {
     ssize_t i;
-    if(channel->channel == 0){
+    int minor;
+    struct ChannelNode *channelNode;
+    if(file->private_data == 0){
         //errno = EINVAL;
         return -1;
     }
@@ -131,16 +209,21 @@ static ssize_t device_read( struct file* file,
     //     //errno = EWOULDBLOCK;
     //     return -1;
     // }
-    printk("%ld %d", length, channel->current_message_length);
-    if(length < channel->current_message_length){
+
+    minor = iminor(file->f_inode);
+
+    channelNode = get_channel_node(minor, (int)(uintptr_t)file->private_data);
+
+    printk("%ld %d", length, channelNode->current_message_length);
+    if(length < channelNode->current_message_length){
         //errno = ENOSPC;
         return -1;
     }
     //any other error
     printk("Invocing device_read");
-    for(i = 0; i < channel->current_message_length && i < BUF_LEN; ++i) {
-        put_user(channel->the_message[i], &buffer[i]);
-        printk("%c\n", channel->the_message[i]);
+    for(i = 0; i < channelNode->current_message_length && i < BUF_LEN; ++i) {
+        put_user(channelNode->the_message[i], &buffer[i]);
+        printk("%c\n", channelNode->the_message[i]);
     }
     printk("%s", buffer);
     return i; // return number of read bytes
@@ -155,7 +238,9 @@ static ssize_t device_write( struct file*       file,
                              loff_t*            offset)
 {
     ssize_t i;
-    if(channel->channel == 0){
+    int minor;
+    struct ChannelNode *channelNode;
+    if(file->private_data == 0){
         //errno = EINVAL;
         return -1;
     }
@@ -163,14 +248,16 @@ static ssize_t device_write( struct file*       file,
         //errno = EMSGSIZE;
         return -1;
     }
-    // any other error: -1, errno = what suits
+    minor = iminor(file->f_inode);
 
+    // any other error: -1, errno = what suits
+    channelNode = get_channel_node(minor, (int)(uintptr_t)file->private_data);
     printk("Invoking device_write(%p,%ld)\n", file, length);
     for(i = 0; i < length && i < BUF_LEN; ++i) {
-        get_user(channel->the_message[i], &buffer[i]);
+        get_user(channelNode->the_message[i], &buffer[i]);
     }
-    printk("message current is %s\n", channel->the_message);
-    channel->current_message_length = i;
+    printk("message current is %s\n", channelNode->the_message);
+    channelNode->current_message_length = i;
     return i;
 }
 
@@ -184,7 +271,7 @@ static long device_ioctl( struct   file* file,
     //errno = EINVAL;
     return -1;
   }
-  channel = get_channel_node(ioctl_param);
+  file->private_data = (void*)ioctl_param;
   return SUCCESS;
 }
 
@@ -218,12 +305,6 @@ static int __init simple_init(void)
     printk( KERN_ERR "registraion failed for  %d\n", MAJOR_NUM );
     return rc;
   }
-
-  channel = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
-  channel->channel = 0;
-  list_head = channel;
-
-  printk("channel number is %d", channel->channel);
 
   printk( "Registeration is successful. ");
   printk( "If you want to talk to the device driver,\n" );
