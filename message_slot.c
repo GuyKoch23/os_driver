@@ -1,41 +1,25 @@
-// Declare what kind of code we want
-// from the header files. Defining __KERNEL__
-// and MODULE allows us to access kernel-level
-// code not usually available to userspace programs.
 #undef __KERNEL__
 #define __KERNEL__
 #undef MODULE
 #define MODULE
 
-
-#include <linux/kernel.h>   /* We're doing kernel work */
-#include <linux/module.h>   /* Specifically, a module */
-#include <linux/fs.h>       /* for register_chrdev */
-#include <linux/uaccess.h>  /* for get_user and put_user */
-#include <linux/string.h>   /* for memset. NOTE - not string.h!*/
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/fs.h>
+#include <linux/uaccess.h>
+#include <linux/string.h>
 #include <linux/slab.h>
 MODULE_LICENSE("GPL");
-
-//Our custom definitions of IOCTL operations
 #include "message_slot.h"
 
 struct chardev_info {
   spinlock_t lock;
 };
 
-// used to prevent concurent access into the same device
 static int dev_open_flag = 0;
-
 static struct chardev_info device_info;
 
-// The message the device will give when asked
-//static char the_message[BUF_LEN];
-//static int current_message_length = 0;
-//tatic int channel_id = 0;
-
-
 //================== LinkedList FUNCTIONS ===========================
-
 
 struct ChannelNode {
   char *the_message;
@@ -50,11 +34,9 @@ struct SlotNode{
   struct SlotNode *next;
 };
 
-//---------------------------------------------------------------
 struct SlotNode *list_head = NULL;
-//---------------------------------------------------------------
 
-int InsertChannelNode(struct SlotNode *slotNode, int channel){
+int insert_channel_node(struct SlotNode *slotNode, int channel){
   struct ChannelNode *channelNode = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
   if(channelNode == NULL){
     printk(KERN_ERR "Error while trying to allocate channel node");
@@ -68,13 +50,25 @@ int InsertChannelNode(struct SlotNode *slotNode, int channel){
   return 0;
 };
 
-//---------------------------------------------------------------
-
-
-
-//---------------------------------------------------------------
-
-
+void release_slot_memory(int minor){
+  struct SlotNode *prevNode = NULL;
+  struct SlotNode *node = list_head;
+  while(node != NULL){
+    if(node->minor == minor){
+      if(prevNode == NULL){
+        list_head = node->next;
+        kfree(node);
+        return;
+      }
+      prevNode->next = node->next;
+      kfree(node);
+      node = prevNode->next;
+      return;
+    }
+    prevNode = node;
+    node = node->next;
+  }
+}
 
 struct ChannelNode* create_zero_channel_node(void){
   struct ChannelNode *channelNode = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
@@ -89,8 +83,6 @@ struct ChannelNode* create_zero_channel_node(void){
   return channelNode;
 }
 
-//---------------------------------------------------------------
-
 void initialize_ds_for_minor(int minor){
   struct SlotNode *slotNode = kmalloc(sizeof(struct SlotNode), GFP_KERNEL);
   if(slotNode == NULL){
@@ -102,8 +94,6 @@ void initialize_ds_for_minor(int minor){
   slotNode->next = list_head;
   list_head = slotNode;
 };
-
-//---------------------------------------------------------------
 
 struct SlotNode* get_slot_node(int minor){
     struct SlotNode *slotNode = list_head;
@@ -117,10 +107,6 @@ struct SlotNode* get_slot_node(int minor){
     return list_head;
 }
 
-
-
-//---------------------------------------------------------------
-
   int is_slot_initialized(int minor){
     struct SlotNode *slotNode = list_head;
     while(slotNode != NULL){
@@ -131,7 +117,6 @@ struct SlotNode* get_slot_node(int minor){
     }
     return 0;
 };
-
 
 struct ChannelNode* get_channel_node(int minor, int channel){
   struct SlotNode* slotNode = get_slot_node(minor);
@@ -144,13 +129,12 @@ struct ChannelNode* get_channel_node(int minor, int channel){
     channelNode = channelNode->next;
   }
 
-  result = InsertChannelNode(slotNode, channel);
+  result = insert_channel_node(slotNode, channel);
   if(result == 1){
     return NULL;
   }
   return slotNode->headChannelNode;
 };
-
 
 //================== DEVICE FUNCTIONS ===========================
 static int device_open( struct inode* inode,
@@ -159,8 +143,6 @@ static int device_open( struct inode* inode,
   unsigned long flags; // for spinlock
   int minor;
   printk("Invoking device_open(%p)\n", file);
-
-  // We don't want to talk to two processes at the same time
   spin_lock_irqsave(&device_info.lock, flags);
 
   //DataStructure already initialized for devide file
@@ -184,18 +166,20 @@ static int device_release( struct inode* inode,
                            struct file*  file)
 {
   unsigned long flags; // for spinlock
+  //int minor;
   printk("Invoking device_release(%p,%p)\n", inode, file);
 
-  // ready for our next caller
   spin_lock_irqsave(&device_info.lock, flags);
   --dev_open_flag;
   spin_unlock_irqrestore(&device_info.lock, flags);
+
+  // releasing related memory
+  //minor = iminor(file->f_inode);
+  //release_slot_memory(minor);
   return SUCCESS;
 }
 
 //---------------------------------------------------------------
-// a process which has already opened
-// the device file attempts to read from it
 static ssize_t device_read( struct file* file,
                             char __user* buffer,
                             size_t       length,
@@ -205,7 +189,12 @@ static ssize_t device_read( struct file* file,
     int minor;
     struct ChannelNode *channelNode;
     char* tempBuffer;
-    long channel = (unsigned long)(file->private_data);
+    long channel;
+
+    if(buffer == NULL){
+      return -EINVAL;
+    }
+    channel = (unsigned long)(file->private_data);
     if(channel == 0){
         return -EINVAL;
     }
@@ -245,8 +234,6 @@ static ssize_t device_read( struct file* file,
 }
 
 //---------------------------------------------------------------
-// a processs which has already opened
-// the device file attempts to write to it
 static ssize_t device_write( struct file*       file,
                              const char __user* buffer,
                              size_t             length,
@@ -256,7 +243,11 @@ static ssize_t device_write( struct file*       file,
     int minor;
     struct ChannelNode *channelNode;
     char* tempBuffer;
-    long channel = (unsigned long)(file->private_data);
+    long channel;
+    if(buffer == NULL){
+      return -EINVAL;
+    }
+    channel = (unsigned long)(file->private_data);
     if(channel == 0){
         return -EINVAL;
     }
@@ -297,7 +288,6 @@ static long device_ioctl( struct   file* file,
                           unsigned int   ioctl_command_id,
                           unsigned long  ioctl_param )
 {
-  // Switch according to the ioctl called
   if( MSG_SLOT_CHANNEL != ioctl_command_id || ioctl_param == 0) {
     return -EINVAL;
   }
@@ -320,7 +310,7 @@ struct file_operations Fops = {
 
 //---------------------------------------------------------------
 // Initialize the module - Register the character device
-static int __init simple_init(void)
+static int __init message_slot_init(void)
 {
   int rc = -1;
   memset(&device_info, 0, sizeof(struct chardev_info));
@@ -335,13 +325,34 @@ static int __init simple_init(void)
 }
 
 //---------------------------------------------------------------
-static void __exit simple_cleanup(void)
+static void __exit message_slot_cleanup(void)
 {
+  struct SlotNode* slotNode;
+  struct SlotNode* prevSlotNode;
+
+  struct ChannelNode* channelNode;
+  struct ChannelNode* prevChannelNode;
+
+  slotNode = list_head;
+
+  while(slotNode != NULL){
+    prevSlotNode = slotNode;
+    channelNode = slotNode->headChannelNode;
+    while(channelNode != NULL){
+      prevChannelNode = channelNode;
+      channelNode = channelNode->next;
+      kfree(prevChannelNode);
+      prevChannelNode = channelNode;
+    }
+    slotNode = slotNode->next;
+    kfree(prevSlotNode);
+    prevSlotNode = slotNode;
+  }
   unregister_chrdev(MAJOR_NUM, DEVICE_RANGE_NAME);
 }
 
 //---------------------------------------------------------------
-module_init(simple_init);
-module_exit(simple_cleanup);
+module_init(message_slot_init);
+module_exit(message_slot_cleanup);
 
 //========================= END OF FILE =========================
