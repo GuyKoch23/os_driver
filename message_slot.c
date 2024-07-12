@@ -23,7 +23,7 @@ static struct chardev_info device_info;
 
 struct ChannelNode {
   char *the_message;
-  int channel; 
+  unsigned int channel; 
   int current_message_length;
   struct ChannelNode *next;
 };
@@ -36,7 +36,7 @@ struct SlotNode{
 
 struct SlotNode *list_head = NULL;
 
-int insert_channel_node(struct SlotNode *slotNode, int channel){
+int insert_channel_node(struct SlotNode *slotNode, unsigned int channel){
   struct ChannelNode *channelNode = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
   if(channelNode == NULL){
     printk(KERN_ERR "Error while trying to allocate channel node");
@@ -118,7 +118,7 @@ struct SlotNode* get_slot_node(int minor){
     return 0;
 };
 
-struct ChannelNode* get_channel_node(int minor, int channel){
+struct ChannelNode* get_channel_node(int minor, unsigned int channel){
   struct SlotNode* slotNode = get_slot_node(minor);
   struct ChannelNode *channelNode = slotNode->headChannelNode;
   int result;

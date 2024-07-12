@@ -12,11 +12,11 @@ int main(int argc, char *argv[])
   int file_desc;
   int ret_val;
   char* file_path;
-  int channel_id;
+  unsigned int channel_id;
   char* message;
 
   if(argc != 4){
-    printf("Number of args not fit %s\n", strerror);
+    printf("Number of args not fit %s\n", strerror(errno));
     exit(1);
   }
 
@@ -26,27 +26,28 @@ int main(int argc, char *argv[])
 
   file_desc = open( file_path, O_RDWR );
   if( file_desc < 0 ) {
-    printf("Can't open device file %s\n", strerror);
+    printf("Can't open device file %s\n", strerror(errno));
     exit(1);
   }
 
   ret_val = ioctl(file_desc, MSG_SLOT_CHANNEL, channel_id);
   if(ret_val == -1){
-    printf("There was a IOCTL problem %s\n", strerror);
+    printf("There was a IOCTL problem %s\n", strerror(errno));
     exit(1);
   }
 
+
+  //message[strlen(message)-1] = '\0';
   ret_val = write(file_desc, message, strlen(message)); 
   if(ret_val == -1){
-    printf("There was a writing problem %s\n", strerror);
+    printf("There was a writing problem %s\n", strerror(errno));
     exit(1);
   }
 
   if(ret_val < strlen(message)){
-    printf("There was a writing problem %s\n", strerror);
+    printf("There was a writing problem %s\n", strerror(errno));
     exit(1);
   }
-
   close(file_desc); 
 
   exit(0);
