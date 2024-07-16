@@ -36,8 +36,6 @@ int main(int argc, char *argv[])
     exit(1);
   }
 
-
-  //message[strlen(message)-1] = '\0';
   ret_val = write(file_desc, message, strlen(message)); 
   if(ret_val == -1){
     printf("There was a writing problem %s\n", strerror(errno));

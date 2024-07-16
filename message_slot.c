@@ -12,12 +12,6 @@
 MODULE_LICENSE("GPL");
 #include "message_slot.h"
 
-struct chardev_info {
-  spinlock_t lock;
-};
-
-static int dev_open_flag = 0;
-static struct chardev_info device_info;
 
 //================== LinkedList FUNCTIONS ===========================
 
@@ -45,30 +39,15 @@ int insert_channel_node(struct SlotNode *slotNode, unsigned int channel){
   channelNode->channel = channel;
   channelNode->current_message_length = 0;
   channelNode->the_message = (char*)kmalloc(sizeof(char)*BUF_LEN, GFP_KERNEL);
+  if(channelNode->the_message == NULL){
+    
+    kfree(channelNode);
+    return 1;
+  }
   channelNode->next = slotNode->headChannelNode;
   slotNode->headChannelNode = channelNode;
   return 0;
 };
-
-void release_slot_memory(int minor){
-  struct SlotNode *prevNode = NULL;
-  struct SlotNode *node = list_head;
-  while(node != NULL){
-    if(node->minor == minor){
-      if(prevNode == NULL){
-        list_head = node->next;
-        kfree(node);
-        return;
-      }
-      prevNode->next = node->next;
-      kfree(node);
-      node = prevNode->next;
-      return;
-    }
-    prevNode = node;
-    node = node->next;
-  }
-}
 
 struct ChannelNode* create_zero_channel_node(void){
   struct ChannelNode *channelNode = kmalloc(sizeof(struct ChannelNode), GFP_KERNEL);
@@ -137,49 +116,27 @@ struct ChannelNode* get_channel_node(int minor, unsigned int channel){
 };
 
 //================== DEVICE FUNCTIONS ===========================
+
 static int device_open( struct inode* inode,
                         struct file*  file )
 {
-  unsigned long flags; // for spinlock
   int minor;
   printk("Invoking device_open(%p)\n", file);
-  spin_lock_irqsave(&device_info.lock, flags);
-
   //DataStructure already initialized for devide file
   minor = iminor(inode);
   if(is_slot_initialized(minor) == 0){
     initialize_ds_for_minor(minor);
   }
-  
-  if( 1 == dev_open_flag ) {
-    spin_unlock_irqrestore(&device_info.lock, flags);
-    return -EBUSY;
-  }
-
-  ++dev_open_flag;
-  spin_unlock_irqrestore(&device_info.lock, flags);
   return SUCCESS;
 }
 
-//---------------------------------------------------------------
 static int device_release( struct inode* inode,
                            struct file*  file)
 {
-  unsigned long flags; // for spinlock
-  //int minor;
   printk("Invoking device_release(%p,%p)\n", inode, file);
-
-  spin_lock_irqsave(&device_info.lock, flags);
-  --dev_open_flag;
-  spin_unlock_irqrestore(&device_info.lock, flags);
-
-  // releasing related memory
-  //minor = iminor(file->f_inode);
-  //release_slot_memory(minor);
   return SUCCESS;
 }
 
-//---------------------------------------------------------------
 static ssize_t device_read( struct file* file,
                             char __user* buffer,
                             size_t       length,
@@ -230,7 +187,7 @@ static ssize_t device_read( struct file* file,
     
     kfree(tempBuffer);
     printk("%s", buffer);
-    return i; // return number of read bytes
+    return i; // returns number of read bytes
 }
 
 //---------------------------------------------------------------
@@ -256,7 +213,6 @@ static ssize_t device_write( struct file*       file,
     }
     minor = iminor(file->f_inode);
 
-    // any other error: -1, errno = what suits
     channelNode = get_channel_node(minor, (int)(uintptr_t)file->private_data);
       if(channelNode == NULL){
       return -ENOMEM;
@@ -277,6 +233,7 @@ static ssize_t device_write( struct file*       file,
     for(i = 0; i < length; ++i) {
          channelNode->the_message[i] = tempBuffer[i];
     }
+
     printk("message current is %s\n", channelNode->the_message);
     channelNode->current_message_length = i;
     kfree(tempBuffer);
@@ -313,8 +270,6 @@ struct file_operations Fops = {
 static int __init message_slot_init(void)
 {
   int rc = -1;
-  memset(&device_info, 0, sizeof(struct chardev_info));
-  spin_lock_init( &device_info.lock );
   rc = register_chrdev(MAJOR_NUM, DEVICE_RANGE_NAME, &Fops);
   if( rc < 0 ) {
     printk(KERN_ERR "registraion failed for  %d\n", MAJOR_NUM);

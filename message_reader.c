@@ -43,7 +43,7 @@ int main(int argc, char *argv[])
 
     ret_val = read( file_desc, buffer, BUF_LEN); 
     if(ret_val == -1){
-        printf("There was a writing problem %s\n", strerror(errno));
+        printf("There was a reading problem %s\n", strerror(errno));
         exit(1);
     }
 
