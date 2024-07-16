@@ -125,7 +125,7 @@ static int device_open( struct inode* inode,
   //DataStructure already initialized for devide file
   minor = iminor(inode);
   if(is_slot_initialized(minor) == 0){
-    initialize_ds_for_minor(minor);
+    initialize_ds_for_minor(minor); // if the ds does not initialized, initializes it
   }
   return SUCCESS;
 }
@@ -148,29 +148,28 @@ static ssize_t device_read( struct file* file,
     char* tempBuffer;
     long channel;
 
-    if(buffer == NULL){
+    if(buffer == NULL){ // supplied buffer is not appropriate
       return -EINVAL;
     }
-    channel = (unsigned long)(file->private_data);
-    if(channel == 0){
+    channel = (unsigned long)(file->private_data); // extracting the current channel number
+    if(channel == 0){ // zero channel is not valid
         return -EINVAL;
     }
     minor = iminor(file->f_inode);
 
-    channelNode = get_channel_node(minor, (int)(uintptr_t)file->private_data);
-    if(channelNode == NULL){
+    channelNode = get_channel_node(minor, (int)(uintptr_t)file->private_data); // getting the relevant Channel Node for reading from
+    if(channelNode == NULL){ // alocation problem
       return -ENOMEM;
     }
-    if(channelNode->current_message_length == 0){
+    if(channelNode->current_message_length == 0){ // message length is 0 
       return -EWOULDBLOCK;
     }
-    if(length < channelNode->current_message_length){
+    if(length < channelNode->current_message_length){ // no enough space in buffer for message
       return -ENOSPC;
     }
-    //any other error
-    printk("Invocing device_read");
+    printk("Invoking device_read");
     
-    tempBuffer = (char*)kmalloc(sizeof(char)*channelNode->current_message_length, GFP_KERNEL);
+    tempBuffer = (char*)kmalloc(sizeof(char)*channelNode->current_message_length, GFP_KERNEL); // temp buffer for atomicity of read process
     if(tempBuffer == NULL){
       return -ENOMEM;
     }
@@ -180,13 +179,12 @@ static ssize_t device_read( struct file* file,
     }
 
     for(i = 0; i < channelNode->current_message_length && i < BUF_LEN; ++i) {
-        if(put_user(tempBuffer[i], &buffer[i]) != 0){
+        if(put_user(tempBuffer[i], &buffer[i]) != 0){ // checking for read success
           return -EFAULT;
         }
     }
     
     kfree(tempBuffer);
-    printk("%s", buffer);
     return i; // returns number of read bytes
 }
 
@@ -204,7 +202,7 @@ static ssize_t device_write( struct file*       file,
     if(buffer == NULL){
       return -EINVAL;
     }
-    channel = (unsigned long)(file->private_data);
+    channel = (unsigned long)(file->private_data); // extracting the current channel number
     if(channel == 0){
         return -EINVAL;
     }
@@ -213,19 +211,19 @@ static ssize_t device_write( struct file*       file,
     }
     minor = iminor(file->f_inode);
 
-    channelNode = get_channel_node(minor, (int)(uintptr_t)file->private_data);
+    channelNode = get_channel_node(minor, (int)(uintptr_t)file->private_data);// getting the relevant Channel Node for writing to
       if(channelNode == NULL){
       return -ENOMEM;
     }
     printk("Invoking device_write(%p,%ld)\n", file, length);
 
-    tempBuffer = (char*)kmalloc(sizeof(char)*length, GFP_KERNEL);
+    tempBuffer = (char*)kmalloc(sizeof(char)*length, GFP_KERNEL); // temp buffer for atomicity of write process
     if(tempBuffer == NULL){
       return -ENOMEM;
     }
 
     for(i = 0; i < length; ++i){
-      if(get_user(tempBuffer[i], &buffer[i]) != 0){
+      if(get_user(tempBuffer[i], &buffer[i]) != 0){ // checking for read success
         return -EFAULT;
       }
     }
@@ -234,7 +232,6 @@ static ssize_t device_write( struct file*       file,
          channelNode->the_message[i] = tempBuffer[i];
     }
 
-    printk("message current is %s\n", channelNode->the_message);
     channelNode->current_message_length = i;
     kfree(tempBuffer);
     return i;
@@ -248,7 +245,7 @@ static long device_ioctl( struct   file* file,
   if( MSG_SLOT_CHANNEL != ioctl_command_id || ioctl_param == 0) {
     return -EINVAL;
   }
-  file->private_data = (void*)ioctl_param;
+  file->private_data = (void*)ioctl_param; // assigning the channel number to device file
   return SUCCESS;
 }
 
@@ -290,7 +287,7 @@ static void __exit message_slot_cleanup(void)
 
   slotNode = list_head;
 
-  while(slotNode != NULL){
+  while(slotNode != NULL){ // freeing the Linked List
     prevSlotNode = slotNode;
     channelNode = slotNode->headChannelNode;
     while(channelNode != NULL){
